@@ -1,0 +1,31 @@
+version: 0.2
+
+phases:
+  install:
+    runtime-versions:
+      java: openjdk11
+      docker: 18
+    commands:
+      - apt-get -y install moreutils # For using 'sponge' later
+      - mvn clean install # Creates a jar file
+  build:
+    commands:
+      - $(aws ecr get-login --no-include-email --region $AWS_REGION) # Login to AWS ECR
+      - IMAGE_TAG=$(echo $CODEBUILD_RESOLVED_SOURCE_VERSION | cut -c 1-7) # Extracting first 7 characters of the commitID to use it as ImageTag
+      - docker build -t $ECR_REPO:latest .
+      - docker tag $ECR_REPO:latest $ECR_REPO:$IMAGE_TAG
+      - aws cloudformation package --template-file template.yaml --s3-bucket $S3_BUCKET --output-template-file template-output.yaml
+  post_build:
+    commands:
+      - docker push $ECR_REPO:latest # Pushing the image to AWS ECR
+      - docker push $ECR_REPO:$IMAGE_TAG
+      - jq '.Parameters.ImageTag = "'$IMAGE_TAG'"' config.json | sponge config.json # Changes the ImageTag value from config.json
+
+artifacts:
+  files: # All the files which makes out of the build stage and shall be forwarded to the next stage are mentioned here. Every other file is no more available in the pipeline
+    - template-output.yaml
+    - config.json
+
+cache:
+  paths:
+    - '/root/.m2/**/*' # Caches maven dependencies for a quicker build
